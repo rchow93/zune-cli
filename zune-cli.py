@@ -141,19 +141,44 @@ def _aes_cmac(key, data):
     return e(bytes(a ^ b for a, b in zip(x, block)))
 
 
+_MTPZ_LINE_NAMES = ("public exponent", "encryption key", "modulus", "private key", "certificates")
+_MTPZ_HELP = "See step 4 (\"MTPZ key file\") in README.md for the one-line download command."
+
+
 def _load_mtpz_keys():
-    """MTPZ keys from the libmtp-format key file, ~/.mtpz-data (or $MTPZ_DATA): five hex
-    lines — public exponent, encryption key, modulus, private key, certificates."""
-    path = os.environ.get("MTPZ_DATA") or os.path.expanduser("~/.mtpz-data")
+    """MTPZ keys from the libmtp-format key file: five hex lines — public exponent, encryption
+    key, modulus, private key, certificates. Uses $MTPZ_DATA if set; otherwise ~/.mtpz-data,
+    then .mtpz-data in the folder this script lives in (the cloned repo)."""
+    env = os.environ.get("MTPZ_DATA")
+    candidates = ([Path(env).expanduser()] if env else
+                  [Path.home() / ".mtpz-data", Path(__file__).resolve().parent / ".mtpz-data"])
+    path = next((p for p in candidates if p.is_file()), None)
+    if path is None:
+        looked = "\n".join(f"  - {p}" for p in candidates)
+        note = "  ($MTPZ_DATA is set, so only that path is checked)\n" if env else ""
+        sys.exit(f"MTPZ key file not found. Looked for:\n{looked}\n{note}{_MTPZ_HELP}")
     try:
-        lines = [ln.strip() for ln in open(path) if ln.strip()]
-    except FileNotFoundError:
-        sys.exit(f"MTPZ key file not found: {path}\n"
-                 "See step 4 (\"MTPZ key file\") in README.md for the one-line download command.")
+        text = path.read_text(errors="replace")
+    except OSError as e:
+        sys.exit(f"Can't read MTPZ key file {path}: {e.strerror or e}\n{_MTPZ_HELP}")
+    lines = [ln.strip() for ln in text.lstrip("\ufeff").splitlines() if ln.strip()]
+    if lines and lines[0].startswith("<"):
+        sys.exit(f"MTPZ key file {path} is a web page (HTML), not the key file.\n"
+                 f"Delete it and download the raw file instead. {_MTPZ_HELP}")
     if len(lines) < 5:
-        sys.exit(f"MTPZ key file {path} needs 5 hex lines, found {len(lines)}")
+        sys.exit(f"MTPZ key file {path} should have 5 lines of hex "
+                 f"({', '.join(_MTPZ_LINE_NAMES)}) but has {len(lines)}.\n"
+                 f"It's incomplete or damaged; re-download it. {_MTPZ_HELP}")
+
+    def _hex(i):
+        try:
+            return bytes.fromhex(lines[i])
+        except ValueError:
+            sys.exit(f"MTPZ key file {path}: line {i + 1} ({_MTPZ_LINE_NAMES[i]}) isn't valid hex.\n"
+                     f"The file is damaged; re-download it. {_MTPZ_HELP}")
+
     names = ("MTPZ_ENCRYPTION_KEY", "MTPZ_MODULUS", "MTPZ_PRIVATE_KEY", "MTPZ_CERTIFICATES")
-    out = {n: bytes.fromhex(v) for n, v in zip(names, lines[1:5])}
+    out = {n: _hex(i) for i, n in enumerate(names, 1)}
     out["MTPZ_PUBLIC_EXPONENT"] = lines[0]
     return out
 
@@ -393,7 +418,8 @@ class MTP:
         self.send_cmd(OP["GetObjectHandles"], (storage, fmt, parent))
         typ, code, payload = self.recv_data()
         if typ != self.DATA:
-            raise RuntimeError(f"GetObjectHandles: got type {typ:#06x}")
+            raise RuntimeError(f"GetObjectHandles (format {fmt:#06x}): device answered "
+                               f"with code {code:#06x} instead of a handle list")
         self.recv_resp()
         return payload
 
@@ -1152,7 +1178,10 @@ def sync_album(folder, client, ffmpeg, name=None, cover_art=None):
 def list_files(client):
     audio_handles = client.enumerate_objects(FMT["MP3"], client.root_handle)
     video_handles = client.enumerate_objects(FMT["WMV"], client.root_handle)
-    video_handles += client.enumerate_objects(FMT["MP4"], client.root_handle)
+    try:  # MP4 exists on the Zune HD; the Zune 30 rejects the MP4 format code
+        video_handles += client.enumerate_objects(FMT["MP4"], client.root_handle)
+    except RuntimeError:
+        pass
 
     print("Files on device:")
     print("-" * 60)

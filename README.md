@@ -47,8 +47,10 @@ Type or paste every command below into the **Terminal** app
    ```
    wc -l < ~/.mtpz-data
    ```
-   The name starts with a dot, so Finder hides it; that's normal. To keep the file
-   somewhere else, run `export MTPZ_DATA=/path/to/the/file` before using the CLI.
+   The name starts with a dot, so Finder hides it; that's normal. The CLI looks for the
+   file in your home folder first, then in the `zune-cli` folder itself (git ignores it
+   there, so it can't be committed by accident). To keep it anywhere else, run
+   `export MTPZ_DATA=/path/to/the/file` before using the CLI.
 5. **Check the connection** — plug in the Zune, then from the repo folder (venv active):
    ```
    python zune-cli.py list
@@ -128,7 +130,7 @@ python zune-cli.py eject
 - Connects to Zune over USB using `libusb` (via `pyusb`)
 - Clears the Zune's bulk-endpoint halts (a stalled endpoint makes it silently ignore writes)
 - Performs MTPZ (Zune extension) authentication — the RSA + AES-CMAC handshake, with
-  the keys read from `~/.mtpz-data` (see Requirements)
+  the keys read from `.mtpz-data` in your home folder or the repo folder (see Requirements)
 
 ### Audio & Metadata
 - Converts audio (WAV, FLAC, M4A → MP3 320kbps) using ffmpeg, tagged ID3v2.3
