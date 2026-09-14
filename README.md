@@ -16,10 +16,14 @@ Pure Python. No Electron, no npm, no Windows VM.
 
 ## Requirements
 
-1. **Python 3.9+**
-2. **ffmpeg** (audio/video conversion) and **libusb** (USB backend for pyusb)
+Type or paste every command below into the **Terminal** app
+(Applications → Utilities → Terminal), one line at a time.
+
+1. **Homebrew**, the Mac package installer. If `brew --version` says "command not found",
+   install it from [brew.sh](https://brew.sh) (one copy-paste command).
+2. **Python, ffmpeg and libusb**
    ```
-   brew install ffmpeg libusb
+   brew install python ffmpeg libusb
    ```
 3. **This repo and its Python packages**
    ```
@@ -28,16 +32,29 @@ Pure Python. No Electron, no npm, no Windows VM.
    python3 -m venv .venv && source .venv/bin/activate
    pip install -r requirements.txt
    ```
-4. **MTPZ key file** — the Zune only talks to software that completes Microsoft's MTPZ
-   handshake. The keys are **not** included in this repo: put a libmtp-format key file
-   (the `.mtpz-data` file used by [libmtp-zune](https://github.com/kbhomes/libmtp-zune))
-   at `~/.mtpz-data`, or point the `MTPZ_DATA` environment variable at it. It holds five
-   hex lines: public exponent, encryption key, modulus, private key, certificates.
+4. **MTPZ key file.** The Zune refuses to talk to software that can't complete Microsoft's
+   "MTPZ" security handshake, which needs a set of keys. The keys are **not** included in
+   this repo, but the [libmtp-zune](https://github.com/kbhomes/libmtp-zune) project
+   publishes them as a small text file named `.mtpz-data`. The keys are the same for every
+   Zune, so there is nothing to generate: just download the file into your home folder:
+   ```
+   curl -fsSL https://raw.githubusercontent.com/kbhomes/libmtp-zune/master/src/.mtpz-data -o ~/.mtpz-data
+   ```
+   That command fetches this file from the libmtp-zune project:
+   [kbhomes/libmtp-zune → src/.mtpz-data](https://github.com/kbhomes/libmtp-zune/blob/master/src/.mtpz-data)
+   (open the link if you want to see exactly what you're downloading).
+   Check it worked. This should print `5` (the file has five lines of keys):
+   ```
+   wc -l < ~/.mtpz-data
+   ```
+   The name starts with a dot, so Finder hides it; that's normal. To keep the file
+   somewhere else, run `export MTPZ_DATA=/path/to/the/file` before using the CLI.
 5. **Check the connection** — plug in the Zune, then from the repo folder (venv active):
    ```
    python zune-cli.py list
    ```
-   If it lists the device's files, you're ready to sync.
+   If it lists the device's files, you're ready to sync. Each time you open a new
+   Terminal window, `cd` into the `zune-cli` folder and run `source .venv/bin/activate` first.
 
 ## Usage
 
@@ -53,17 +70,10 @@ python zune-cli.py push --video ~/Videos/movie.mp4
 python zune-cli.py push --video ~/Videos/
 ```
 
-### Push video with subtitles (burned in)
-```bash
-# Match SRT files by name: movie.mp4 + movie.srt
-python zune-cli.py push --video ~/Videos/ --subtitles-on
-
-# Or specify SRT files explicitly
-python zune-cli.py push --video ~/Videos/movie.mp4 --subtitles ~/Videos/movie.srt
-
-# Or from a SRT directory
-python zune-cli.py push --video ~/Videos/ --subtitles-on-dir ~/Videos/subs/
-```
+### Subtitles (future feature, untested)
+`push --video` has scaffolding for burning `.srt` subtitles into the video
+(`--subtitles`, `--subtitles-on`, `--subtitles-on-dir`), but it has **not been tested
+on a Zune yet** and may not work. Use at your own risk; reports are welcome.
 
 ### Create a playlist on the device
 ```bash
@@ -139,7 +149,7 @@ The Zune 30 only displays artist/album/song metadata during playback if an **Abs
 - Reads input with `-ignore_editlist 1` — some MP4 downloads otherwise
   convert only their first ~3 seconds
 - Stored in the device's **Video** folder; `.wmv` files are pushed as-is
-- Embeds subtitles if requested (burned into video, not separate)
+- Subtitle burn-in is scaffolded but untested (future feature)
 
 ## Advanced: Korean/Non-Latin Album Metadata
 

@@ -148,7 +148,8 @@ def _load_mtpz_keys():
     try:
         lines = [ln.strip() for ln in open(path) if ln.strip()]
     except FileNotFoundError:
-        sys.exit(f"MTPZ key file not found: {path} (see README: MTPZ keys)")
+        sys.exit(f"MTPZ key file not found: {path}\n"
+                 "See step 4 (\"MTPZ key file\") in README.md for the one-line download command.")
     if len(lines) < 5:
         sys.exit(f"MTPZ key file {path} needs 5 hex lines, found {len(lines)}")
     names = ("MTPZ_ENCRYPTION_KEY", "MTPZ_MODULUS", "MTPZ_PRIVATE_KEY", "MTPZ_CERTIFICATES")
@@ -1195,7 +1196,6 @@ Examples:
   %(prog)s push --audio ~/Music/song.mp3
   %(prog)s push --audio ~/Music/Album
   %(prog)s push --video ~/Videos/movie.mp4
-  %(prog)s push --video ~/Videos/ --subtitles-on
   %(prog)s playlist "Favorites" song1.mp3 song2.mp3
   %(prog)s list
   %(prog)s eject
@@ -1207,9 +1207,9 @@ Examples:
     p_push = sub.add_parser("push")
     p_push.add_argument("--audio", nargs="+", metavar="PATH")
     p_push.add_argument("--video", nargs="+", metavar="PATH")
-    p_push.add_argument("--subtitles", nargs="+", metavar="PATH")
-    p_push.add_argument("--subtitles-on", action="store_true")
-    p_push.add_argument("--subtitles-on-dir", metavar="DIR")
+    p_push.add_argument("--subtitles", nargs="+", metavar="PATH", help="untested (future feature)")
+    p_push.add_argument("--subtitles-on", action="store_true", help="untested (future feature)")
+    p_push.add_argument("--subtitles-on-dir", metavar="DIR", help="untested (future feature)")
 
     # playlist
     p_pl = sub.add_parser("playlist")
