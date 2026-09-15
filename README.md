@@ -135,9 +135,11 @@ python zune-cli.py delete --type photos              # delete every photo
 python zune-cli.py delete --type tracks "DAVICHI"    # delete matching tracks
 python zune-cli.py delete --type albums "album"      # delete an album (its object + tracks)
 python zune-cli.py delete --type playlists "Gym"     # delete a playlist
+python zune-cli.py delete --type music               # wipe all tracks, albums and playlists
 ```
 
-`--type` is one of `tracks`, `albums`, `playlists`, `videos`, `photos` (default `tracks`).
+`--type` is one of `tracks`, `albums`, `playlists`, `music`, `videos`, `photos` (default `tracks`).
+`music` keeps videos, photos and device folders; deleting playlists never removes a folder.
 
 ### File naming
 The title the Zune shows for a track, video, or photo is the **local filename without

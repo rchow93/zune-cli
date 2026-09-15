@@ -340,9 +340,13 @@ class MTP:
         self.write(struct.pack("<IHHI", 12 + len(data), self.DATA, opcode, self.tx))
         if data:  # empty objects (albums/playlists) are header-only
             self.write(data)
+            if len(data) % 512 == 0:
+                self.write(b"")  # zero-length packet ends a payload that filled whole packets
 
     def recv_data(self):
         head = self.read(512)
+        while not head:  # zero-length packet: ends a previous container that filled whole 512-byte packets
+            head = self.read(512)
         total = struct.unpack_from("<I", head)[0]
         buf = head
         while len(buf) < total:
@@ -530,7 +534,7 @@ class MTPClient:
         m.write(struct.pack("<IHHI", total, m.DATA, OP["SendObject"], m.tx))
         for off in range(0, len(data), BATCH):
             m.write(data[off:off + BATCH])
-        if total % 512 == 0:
+        if len(data) % 512 == 0:  # payload goes in its own writes, so its length is what counts
             m.write(b"")  # zero-length packet ends the transfer
         m.recv_resp()
 
@@ -908,16 +912,15 @@ def sync_playlist(name, track_paths, client, ffmpeg, track_handles=None):
     # Resolve track handles (or use the ones the caller just pushed)
     audio_exts = {".mp3", ".wav", ".m4a", ".flac"}
     refs = b"".join(_u32(h) for h in track_handles or [])
-    for tp in ([] if track_handles else track_paths):
-        p = Path(tp)
-        if p.suffix.lower() not in audio_exts:
-            continue
-        handles = client.enumerate_objects(FMT["MP3"], client.root_handle)
-        for h in handles:
-            info = client.get_obj_info(h)
-            if info["filename"].lower() == p.name.lower():
-                refs += _u32(h)
-                break
+    if not track_handles:
+        # One pass over the device's tracks (not one per entry), mapping filename -> handle
+        on_device = {}
+        for h in client.enumerate_objects(FMT["MP3"], client.root_handle):
+            on_device.setdefault(client.get_obj_info(h)["filename"].lower(), h)
+        for tp in track_paths:
+            p = Path(tp)
+            if p.suffix.lower() in audio_exts and p.name.lower() in on_device:
+                refs += _u32(on_device[p.name.lower()])
 
     if refs:
         client.set_prop(pla, PROP_OBJECTREFS, refs)  # ObjectReferences
@@ -1275,8 +1278,9 @@ Examples:
     p_del.add_argument("target", nargs="?", default="",
                        help="Filename substring to match (empty = all of the type)")
     p_del.add_argument("--type",
-                       choices=["tracks", "albums", "playlists", "videos", "photos"],
-                       default="tracks", help="What to delete (default: tracks)")
+                       choices=["tracks", "albums", "playlists", "music", "videos", "photos"],
+                       default="tracks",
+                       help="What to delete (default: tracks; music = tracks + albums + playlists)")
 
     # album (full workflow: push + playlist + abstract album)
     p_album = sub.add_parser("album")
@@ -1537,58 +1541,55 @@ Examples:
         print()
 
     elif args.cmd == "delete":
-        """Delete tracks, albums, or playlists from the device."""
+        """Delete tracks, albums, playlists, videos, or photos from the device."""
         client = connect(device)
         target = args.target.lower()
         target_type = args.type
 
+        def delete_matching(handles, strip="", pla_only=False):
+            """Delete the objects whose name contains target; returns how many.
+            An object the device won't describe (it answers with an error) is deleted only
+            when target is empty. pla_only keeps real folders: only *.pla Assoc objects go."""
+            deleted = 0
+            for h in handles:
+                try:
+                    name = client.get_obj_info(h)["filename"]
+                except RuntimeError:
+                    name = None
+                if pla_only and not (name or "").lower().endswith(".pla"):
+                    continue
+                if name is None and target:
+                    continue
+                if target in (name or "").replace(strip, "").lower():
+                    try:
+                        client.delete(h)
+                    except RuntimeError as e:
+                        print(f"  could not delete {name or f'object {h:#x}'}: {e}")
+                        continue
+                    print(f"  deleted {name or f'object {h:#x}'}")
+                    deleted += 1
+            return deleted
+
         if target_type == "tracks":
             # Delete MP3 files matching the filename
             handles = client.enumerate_objects(FMT["MP3"], client.root_handle)
-            deleted = 0
-            for h in handles:
-                info = client.get_obj_info(h)
-                if target in info["filename"].lower():
-                    client.delete(h)
-                    print(f"  deleted {info['filename']}")
-                    deleted += 1
-            print(f"\n  Deleted {deleted}/{len(handles)} tracks.\n")
+            print(f"\n  Deleted {delete_matching(handles)}/{len(handles)} tracks.\n")
 
-        elif target_type == "albums":
+        elif target_type in ("albums", "music"):
             # Delete Abstract Album (0xBA03) objects matching the name
             handles = client.enumerate_objects(FMT["AbstractAlbum"], client.root_handle)
-            deleted = 0
-            for h in handles:
-                info = client.get_obj_info(h)
-                fname = info["filename"].replace(".abm", "").lower()
-                if target in fname:
-                    client.delete(h)
-                    print(f"  deleted album '{info['filename']}'")
-                    deleted += 1
+            deleted = delete_matching(handles, strip=".abm")
 
             # Also delete associated MP3 files
-            mp3_handles = client.enumerate_objects(FMT["MP3"], client.root_handle)
-            for h in mp3_handles:
-                info = client.get_obj_info(h)
-                if target in info["filename"].lower():
-                    client.delete(h)
-                    print(f"  deleted {info['filename']}")
-                    deleted += 1
-
+            deleted += delete_matching(client.enumerate_objects(FMT["MP3"], client.root_handle))
             print(f"\n  Deleted {deleted} objects.\n")
 
-        elif target_type == "playlists":
-            # Delete Playlist (0xBA05) and Assoc (.pla) objects
+        if target_type in ("playlists", "music"):  # not elif: music also clears playlists
+            # Delete Playlist (0xBA05) objects, and .pla files stored as Assoc -- never a folder
+            deleted = delete_matching(client.enumerate_objects(FMT["Playlist"], client.root_handle))
             handles = client.enumerate_objects(FMT["Assoc"], client.root_handle)
-            handles += client.enumerate_objects(FMT["Playlist"], client.root_handle)
-            deleted = 0
-            for h in handles:
-                info = client.get_obj_info(h)
-                if target in info["filename"].lower():
-                    client.delete(h)
-                    print(f"  deleted {info['filename']}")
-                    deleted += 1
-            print(f"\n  Deleted {deleted}/{len(handles)} playlists.\n")
+            deleted += delete_matching(handles, pla_only=True)
+            print(f"\n  Deleted {deleted} playlists.\n")
 
         elif target_type == "videos":
             # Delete WMV + MP4 video objects matching the filename.
@@ -1599,14 +1600,7 @@ Examples:
                 handles += client.enumerate_objects(FMT["MP4"], client.root_handle)
             except RuntimeError:
                 pass
-            deleted = 0
-            for h in handles:
-                info = client.get_obj_info(h)
-                if target in info["filename"].lower():
-                    client.delete(h)
-                    print(f"  deleted {info['filename']}")
-                    deleted += 1
-            print(f"\n  Deleted {deleted}/{len(handles)} videos.\n")
+            print(f"\n  Deleted {delete_matching(handles)}/{len(handles)} videos.\n")
 
         elif target_type == "photos":
             # Delete images in the Pictures folder (no-op if the folder is absent)
@@ -1618,14 +1612,7 @@ Examples:
             if pics_dir is not None:
                 handles = client.enumerate_objects(FMT["JPEG"], pics_dir)
                 handles += client.enumerate_objects(FMT["Assoc"], pics_dir)
-            deleted = 0
-            for h in handles:
-                info = client.get_obj_info(h)
-                if target in info["filename"].lower():
-                    client.delete(h)
-                    print(f"  deleted {info['filename']}")
-                    deleted += 1
-            print(f"\n  Deleted {deleted}/{len(handles)} photos.\n")
+            print(f"\n  Deleted {delete_matching(handles)}/{len(handles)} photos.\n")
 
         client.close()
 
