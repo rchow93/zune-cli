@@ -618,13 +618,18 @@ def convert_video(path, subtitles, ffmpeg):
     vf = "scale=320:240:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=320:240:(ow-iw)/2:(oh-ih)/2:black,setsar=1"
     if subtitles:
         vf = f"subtitles='{subtitles}'," + vf
-    cmd = [ffmpeg, "-ignore_editlist", "1", "-i", path,
-           "-vf", vf, "-fpsmax", "30",
-           "-c:v", "wmv2", "-b:v", "384k",
-           "-minrate", "192k", "-maxrate", "512k", "-bufsize", "512k",
-           "-c:a", "wmav2", "-b:a", "128k",
-           "-ar", "44100", "-ac", "2",
-           "-map_metadata", "-1"]
+    cmd = [ffmpeg]
+    # -ignore_editlist is only an option of the MP4/MOV demuxer. It raises
+    # "Option not found" on Matroska/WebM inputs, so apply it only to MP4-family.
+    if p.suffix.lower() in (".mp4", ".m4v", ".mov", ".m4a", ".3gp", ".3g2"):
+        cmd.extend(["-ignore_editlist", "1"])
+    cmd.extend(["-i", path,
+                "-vf", vf, "-fpsmax", "30",
+                "-c:v", "wmv2", "-b:v", "384k",
+                "-minrate", "192k", "-maxrate", "512k", "-bufsize", "512k",
+                "-c:a", "wmav2", "-b:a", "128k",
+                "-ar", "44100", "-ac", "2",
+                "-map_metadata", "-1"])
     cmd.extend(["-y", tmp.name])
 
     subprocess.check_call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=4 * 3600)  # full movies take a while
@@ -818,7 +823,7 @@ def _root_folder(client, name):
 
 
 def sync_video(paths, subtitles_map, client, ffmpeg, on_progress=None):
-    video_exts = {".mp4", ".m4v", ".avi", ".mov", ".mkv", ".wmv"}
+    video_exts = {".mp4", ".m4v", ".avi", ".mov", ".mkv", ".wmv", ".webm"}
     total = 0
     pushed = 0
 
@@ -1265,10 +1270,12 @@ Examples:
     p_tr.add_argument("--mapping", metavar="FILE", help="JSON mapping file (track_num → ascii_title)")
     p_tr.add_argument("--artist", default="", help="Artist name override")
 
-    # delete (tracks / albums / playlists)
+    # delete (tracks / albums / playlists / videos / photos)
     p_del = sub.add_parser("delete")
-    p_del.add_argument("target")
-    p_del.add_argument("--type", choices=["tracks", "albums", "playlists"],
+    p_del.add_argument("target", nargs="?", default="",
+                       help="Filename substring to match (empty = all of the type)")
+    p_del.add_argument("--type",
+                       choices=["tracks", "albums", "playlists", "videos", "photos"],
                        default="tracks", help="What to delete (default: tracks)")
 
     # album (full workflow: push + playlist + abstract album)
@@ -1582,6 +1589,43 @@ Examples:
                     print(f"  deleted {info['filename']}")
                     deleted += 1
             print(f"\n  Deleted {deleted}/{len(handles)} playlists.\n")
+
+        elif target_type == "videos":
+            # Delete WMV + MP4 video objects matching the filename.
+            # The Zune answers 0x2002 (not a handle list) for GetObjectHandles
+            # on MP4; treat that as "no MP4 objects" rather than an error.
+            handles = client.enumerate_objects(FMT["WMV"], client.root_handle)
+            try:
+                handles += client.enumerate_objects(FMT["MP4"], client.root_handle)
+            except RuntimeError:
+                pass
+            deleted = 0
+            for h in handles:
+                info = client.get_obj_info(h)
+                if target in info["filename"].lower():
+                    client.delete(h)
+                    print(f"  deleted {info['filename']}")
+                    deleted += 1
+            print(f"\n  Deleted {deleted}/{len(handles)} videos.\n")
+
+        elif target_type == "photos":
+            # Delete images in the Pictures folder (no-op if the folder is absent)
+            try:
+                pics_dir = _root_folder(client, "Pictures")
+            except SystemExit:
+                pics_dir = None
+            handles = []
+            if pics_dir is not None:
+                handles = client.enumerate_objects(FMT["JPEG"], pics_dir)
+                handles += client.enumerate_objects(FMT["Assoc"], pics_dir)
+            deleted = 0
+            for h in handles:
+                info = client.get_obj_info(h)
+                if target in info["filename"].lower():
+                    client.delete(h)
+                    print(f"  deleted {info['filename']}")
+                    deleted += 1
+            print(f"\n  Deleted {deleted}/{len(handles)} photos.\n")
 
         client.close()
 

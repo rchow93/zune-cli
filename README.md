@@ -124,6 +124,36 @@ python zune-cli.py list
 python zune-cli.py eject
 ```
 
+### Delete content from the device
+Remove music, video, or images already on the Zune. `target` is a substring of the
+filename; leave it out (or empty) to delete **all** of that type.
+
+```bash
+python zune-cli.py delete --type videos              # delete every video
+python zune-cli.py delete --type videos "busan"      # only videos whose name has "busan"
+python zune-cli.py delete --type photos              # delete every photo
+python zune-cli.py delete --type tracks "DAVICHI"    # delete matching tracks
+python zune-cli.py delete --type albums "album"      # delete an album (its object + tracks)
+python zune-cli.py delete --type playlists "Gym"     # delete a playlist
+```
+
+`--type` is one of `tracks`, `albums`, `playlists`, `videos`, `photos` (default `tracks`).
+
+### File naming
+The title the Zune shows for a track, video, or photo is the **local filename without
+its extension**. If you want a specific name on the device, rename the file before
+syncing — the CLI uses the name as-is and never edits it.
+
+```bash
+mv "random-1a2b3c.mp4" "My Song.mp4"   # will appear on the device as "My Song"
+python zune-cli.py push --audio "My Song.mp4"
+```
+
+Two things to keep in mind:
+- The Zune 30's on-screen font has **no Korean/Chinese/Japanese glyphs** — use Latin
+  titles for anything you want to read on the device (the audio still plays fine).
+- Very long titles are truncated in the list view, so keep names reasonably short.
+
 ## How It Works
 
 ### USB & Protocol
@@ -145,11 +175,12 @@ python zune-cli.py eject
 The Zune 30 only displays artist/album/song metadata during playback if an **Abstract Album object** exists with the same name as the album in the ID3 tags. Without this object, the device plays the files but shows no metadata. The abstract album object links the tracks and tells the device to use their ID3 tags for display.
 
 ### Video & Conversion
-- Converts MP4/M4V/MOV/MKV/AVI → WMV (`wmv2` + `wmav2` 128k/44.1 kHz), **320×240 letterboxed**
+- Converts MP4/M4V/MOV/MKV/AVI/WebM → WMV (`wmv2` + `wmav2` 128k/44.1 kHz), **320×240 letterboxed**
   (widescreen is never stretched), frame rate capped at 30 fps
 - `-b:v 384k`: plays smoothly; expect some blockiness on fast motion
-- Reads input with `-ignore_editlist 1` — some MP4 downloads otherwise
-  convert only their first ~3 seconds
+- Reads MP4-family input with `-ignore_editlist 1` (that flag is only a valid option for
+  the MP4 demuxer, so it's applied only there) — some MP4 downloads otherwise convert
+  only their first ~3 seconds
 - Stored in the device's **Video** folder; `.wmv` files are pushed as-is
 - Subtitle burn-in is scaffolded but untested (future feature)
 
