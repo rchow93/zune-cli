@@ -734,19 +734,30 @@ def disconnect(client):
 # ── Sync Functions ────────────────────────────────────────────────────────────
 
 def _track_tags(path):
-    """Title/artist/album/track from the file's ID3 tags (title falls back to the file stem)."""
+    """Title/artist/album/track from the file's tags (mp3 ID3 or m4a/MP4).
+
+    Uses mutagen's easy mode so both formats expose the same keys (the old
+    ID3-only read silently dropped every tag on m4a). Title falls back to the
+    file stem when no tag is present.
+    """
     tags = {"title": Path(path).stem}
     try:
-        from mutagen.id3 import ID3
-        id3 = ID3(path)
+        from mutagen import File
+        f = File(path, easy=True)
     except Exception:
         return tags
-    for key, frame in (("title", "TIT2"), ("artist", "TPE1"), ("album", "TALB"), ("album_artist", "TPE2")):
-        if frame in id3 and str(id3[frame]).strip():
-            tags[key] = str(id3[frame]).strip()
-    if "TRCK" in id3:
+    if f is None:
+        return tags
+    def g(key):
+        vals = f.get(key)
+        return str(vals[0]).strip() if vals else None
+    for out, key in (("title", "title"), ("artist", "artist"),
+                     ("album", "album"), ("album_artist", "albumartist")):
+        if (v := g(key)):
+            tags[out] = v
+    if (tn := g("tracknumber")):
         try:
-            tags["track"] = int(str(id3["TRCK"]).split("/")[0])
+            tags["track"] = int(tn.split("/")[0])
         except ValueError:
             pass
     return tags
@@ -759,6 +770,11 @@ def sync_audio(paths, client, ffmpeg, on_progress=None):
     pushed = 0
     pushed_handles = []
 
+    def _norm(name):
+        # The firmware strips dots from object names ("01. Song" -> "01 Song"),
+        # so both sides of the dedup comparison are normalized the same way.
+        return name.lower().replace(".", "")
+
     for path in paths:
         p = Path(path)
         if p.suffix.lower() not in audio_exts:
@@ -766,15 +782,15 @@ def sync_audio(paths, client, ffmpeg, on_progress=None):
             continue
         total += 1
         tags = _track_tags(path)
-        # The Zune names MP3 objects "<Name property>.mp3", so match on the title
-        device_name = f"{tags['title']}.mp3"
+        # The Zune names MP3 objects from the file stem, so dedup on the stem
+        device_key = _norm(p.stem + ".mp3")
 
         # Check if file already exists
         handles = client.enumerate_objects(FMT["MP3"], client.root_handle)
         existing = None
         for h in handles:
             info = client.get_obj_info(h)
-            if info["filename"].lower() == device_name.lower():
+            if _norm(info["filename"]) == device_key:
                 existing = h
                 break
 
@@ -871,6 +887,7 @@ def sync_video(paths, subtitles_map, client, ffmpeg, on_progress=None):
                 pass
 
     print(f"\n  Pushed {pushed}/{total} video files.\n")
+    return {"pushed": pushed, "total": total}
 
 
 def sync_playlist(name, track_paths, client, ffmpeg, track_handles=None):
@@ -1021,6 +1038,7 @@ def sync_photos(paths, client, resize=0, on_progress=None):
                 pass
 
     print(f"\n  Pushed {pushed}/{total} images.\n")
+    return {"pushed": pushed, "total": total}
 
 
 def push_cover_art(album_path, client, explicit_path=None):
